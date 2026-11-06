@@ -173,6 +173,25 @@ test.skipIf(process.platform === 'win32')('a served secondary mints its ticket t
   }
 })
 
+test('concurrent ensures for one home share a single client', async () => {
+  const { coalescedEnsureLocalGateway } = await import('./local-gateway')
+  const endpoint = { profile_id: '/private/profile', instance_id: 'owner', authority_epoch: 1, runtime_protocol: 1, api_origin: 'http://127.0.0.1:1234', capabilities: ['session-authority-v1'], supervisor: 'none' }
+  let runs = 0
+  const run = async () => {
+    runs += 1
+    await new Promise(resolve => setTimeout(resolve, 40))
+
+    return { code: 0, stdout: JSON.stringify({ state: 'ready', endpoint }) }
+  }
+  const [a, b] = await Promise.all([
+    coalescedEnsureLocalGateway('/home/x/.hermes', run),
+    coalescedEnsureLocalGateway('/home/x/.hermes', run)
+  ])
+
+  expect(runs).toBe(1)
+  expect(a.baseUrl).toBe(b.baseUrl)
+})
+
 test('ensure consumes structured readiness without acquiring a child owner', async () => {
   const endpoint = { profile_id: '/private/profile', instance_id: 'owner', authority_epoch: 1, runtime_protocol: 1, api_origin: 'http://127.0.0.1:1234', capabilities: ['session-authority-v1'], supervisor: 'none' }
   const connection = await ensureLocalGateway(async () => ({ code: 0, stdout: JSON.stringify({ state: 'ready', endpoint }) }))

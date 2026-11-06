@@ -1729,8 +1729,17 @@ def start() -> None:
 
     # Manual starts use the same console-less direct spawn as restart() and install --start-now;
     # Scheduled Task / Startup entries are only login persistence.
-    _spawn_detached()
-    _report_gateway_start("direct spawn")
+    from hermes_cli.gateway_start_lock import exclusive_start_lock
+    try:
+        with exclusive_start_lock(_hermes_home(), timeout=45):
+            running_pids = _gateway_pids()
+            if running_pids:
+                _report_already_running(running_pids)
+                return
+            _spawn_detached()
+            _report_gateway_start("direct spawn")
+    except TimeoutError:
+        print("✗ Gateway start lock timed out — another start is already in progress.")
 
 
 def _drain_gateway_pid(pid: int, drain_timeout: float) -> bool:

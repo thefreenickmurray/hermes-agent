@@ -254,6 +254,35 @@ export async function ensureLocalGateway(
   return { baseUrl: endpoint.api_origin, wsUrl: `${endpoint.api_origin.replace(/^http/, 'ws')}/api/ws?native_dial=unminted`, mode: 'local', source: 'local', authMode: 'native', token: '', gatewayEndpoint: endpoint }
 }
 
+const inflightEnsureByHome = new Map<string, Promise<Awaited<ReturnType<typeof ensureLocalGateway>>>>()
+
+function ensureHomeKey(home: string): string {
+  return String(home || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() || 'default'
+}
+
+/** One in-flight `gateway ensure` per HERMES_HOME.
+
+ *  Multiplex Desktop recovery otherwise stampede-starts one daemon per profile
+ *  (four `gateway run` processes at the same millisecond on 2026-11-05). */
+export function coalescedEnsureLocalGateway(
+  home: string,
+  run: () => Promise<{ code: number; stdout: string; stderr?: string }>,
+  beforeEnsure?: () => Promise<void>,
+  restartStale?: StaleGatewayRestart
+): Promise<Awaited<ReturnType<typeof ensureLocalGateway>>> {
+  const key = ensureHomeKey(home)
+  const existing = inflightEnsureByHome.get(key)
+
+  if (existing) {return existing}
+  const pending = ensureLocalGateway(run, beforeEnsure, restartStale).finally(() => {
+    if (inflightEnsureByHome.get(key) === pending) {inflightEnsureByHome.delete(key)}
+  })
+
+  inflightEnsureByHome.set(key, pending)
+
+  return pending
+}
+
 // The cached connection descriptor pins the gateway instance that answered the
 // first `gateway ensure`. When that owner is gone (crash, `gateway stop`,
 // update restart) every ticket mint against the stale control socket fails and

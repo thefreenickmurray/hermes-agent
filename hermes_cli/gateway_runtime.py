@@ -470,17 +470,20 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
                     # or already installed; with no multiplexer evidence yet, the host is still its owner.
                     target = host
                     service = discover_existing_gateway_service(target, deadline=deadline)
-                # Runtime locks settle races remaining after this second probe.
-                observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
-                if observed.state != "absent":
-                    continue
-                if service is not None:
-                    start_existing_gateway_service(service, deadline=deadline)
-                else:
-                    from hermes_cli.gateway_runtime_start import spawn_unmanaged_gateway, stdio_log_size
-                    child_home, child_offset = target, stdio_log_size(target)
-                    child = spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
-                requested = True
+                # Client-side lock: gateway.lock is acquired too late (after imports), so concurrent
+                # Desktop `gateway ensure`s all saw absent and spawned (four `gateway run`s at once).
+                from hermes_cli.gateway_start_lock import exclusive_start_lock
+                with exclusive_start_lock(target, timeout=max(1.0, remaining(deadline))):
+                    observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
+                    if observed.state != "absent":
+                        continue
+                    if service is not None:
+                        start_existing_gateway_service(service, deadline=deadline)
+                    else:
+                        from hermes_cli.gateway_runtime_start import spawn_unmanaged_gateway, stdio_log_size
+                        child_home, child_offset = target, stdio_log_size(target)
+                        child = spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
+                    requested = True
             time.sleep(min(delay, remaining(deadline)))
             # Capped low: each probe is a lock-file read or one local identify, and READY is noticed
             # within ~50 ms instead of up to 250 ms later on every cold start.
